@@ -1,0 +1,139 @@
+function [cost,grad] = sparseAutoencoderCost(theta, visibleSize, hiddenSize, ...
+                                             lambda, sparsityParam, beta, data)
+
+%for debugging 
+
+%data=data(:,1:10);
+beta=0;
+lambda=0;
+
+
+% visibleSize: the number of input units (probably 64) 
+% hiddenSize: the number of hidden units (probably 25) 
+% lambda: weight decay parameter
+% sparsityParam: The desired average activation for the hidden units (denoted in the lecture
+%                           notes by the greek alphabet rho, which looks like a lower-case "p").
+% beta: weight of sparsity penalty term
+% data: Our 64x10000 matrix containing the training data.  So, data(:,i) is the i-th training example. 
+  
+% The input theta is a vector (because minFunc expects the parameters to be a vector). 
+% We first convert theta to the (W1, W2, b1, b2) matrix/vector format, so that this 
+% follows the notation convention of the lecture notes. 
+
+W1 = reshape(theta(1:hiddenSize*visibleSize), hiddenSize, visibleSize);
+W2 = reshape(theta(hiddenSize*visibleSize+1:2*hiddenSize*visibleSize), visibleSize, hiddenSize);
+b1 = theta(2*hiddenSize*visibleSize+1:2*hiddenSize*visibleSize+hiddenSize);
+b2 = theta(2*hiddenSize*visibleSize+hiddenSize+1:end);
+
+% Cost and gradient variables (your code needs to compute these values). 
+% Here, we initialize them to zeros. 
+cost = 0;
+W1grad = zeros(size(W1)); 
+W2grad = zeros(size(W2));
+b1grad = zeros(size(b1)); 
+b2grad = zeros(size(b2));
+
+%% ---------- YOUR CODE HERE --------------------------------------
+%  Instructions: Compute the cost/optimization objective J_sparse(W,b) for the Sparse Autoencoder,
+%                and the corresponding gradients W1grad, W2grad, b1grad, b2grad.
+%
+% W1grad, W2grad, b1grad and b2grad should be computed using backpropagation.
+% Note that W1grad has the same dimensions as W1, b1grad has the same dimensions
+% as b1, etc.  Your code should set W1grad to be the partial derivative of J_sparse(W,b) with
+% respect to W1.  I.e., W1grad(i,j) should be the partial derivative of J_sparse(W,b) 
+% with respect to the input parameter W1(i,j).  Thus, W1grad should be equal to the term 
+% [(1/m) \Delta W^{(1)} + \lambda W^{(1)}] in the last block of pseudo-code in Section 2.2 
+% of the lecture notes (and similarly for W2grad, b1grad, b2grad).
+% 
+% Stated differently, if we were using batch gradient descent to optimize the parameters,
+% the gradient descent update to W1 would be W1 := W1 - alpha * W1grad, and similarly for W2, b1, b2. 
+% 
+
+% W1 is 25 64
+% W2 is 64 25
+% b1 is 25 1
+% b2 is 64 1
+Theta1=[W1 b1]; %it is now 25 65
+Theta2=[W2 b2]; %it is now 64 26
+m=size(data,2);
+%a1=[ones(1,m);data]; % 65 10000
+a1=data; %64 10000
+%z2=[Theta1*a1];    % 25 10000
+z2= [b1 W1*a1];
+a2=sigmoid(z2);    % same as abv
+%a2= [ones(1,m);a2]; % is 26 10000
+%z3=[Theta2*a2]; 	% z3 is 64 10000
+z3=[b2 W2*a2];
+a3=sigmoid(z3);		% a3 is 64 10000
+hx=a3;			% hx is 64 10000
+y=data;
+
+size(hx)
+size(a1)
+%rho_j=sum(a2*a1')/m;
+sparsity=0;
+sparsity_der=0;
+%{
+for j=1:hiddenSize
+  sparsity=sparsity+sparsityParam*log(sparsityParam/rho_j(j)) +(1-sparsityParam)*log((1-sparsityParam)/(1-rho_j(j)));
+  sparsity_der= sparsity_der + (-sparsityParam/rho_j(j) + (1-sparsityParam)/(1-rho_j(j)));
+end
+%}
+const=lambda*(sum(sum(W1.^2)) +sum(sum(W2.^2)))/2;
+cost= sum((sum(hx- y).^2)/2)/m + const + beta*sparsity;
+
+
+
+delta3=-(-y-a3).*(a3.*(1-a3));   %is 64 10000
+delta2=((Theta2'*delta3)+ beta*sparsity_der).*(a2.*(1-a2)); % is 26 10000
+Delta2= delta3*a2'; %64 26
+delta2=delta2(2:end,:);
+Delta1= delta2*a1'; %25 65
+
+%{
+Delta1=0;
+Delta2=0;
+for t=1:m, 
+  a_1=a1(:,t); % 65 1
+  z_2= Theta1*a_1; % 25 1
+  a_2=sigmoid(z_2); 
+  a_2=[1;a_2]; %26 1
+  z_2=[1;z_2];
+  z_3=(Theta2*a_2); % 64  1
+  a_3=sigmoid(z_3); %  64 1
+  hx=a_3;
+  delta3=a_3-y(:,t); % y is  64 1 so is a3
+  delta2=Theta2'*delta3.*sigmoidGradient(z_2);% 26 1
+  delta2=delta2(2:end);% 25 1
+  Delta1= Delta1 + delta2*a_1'; % 25 65 
+  Delta2= Delta2 + delta3*a_2'; % 64 26
+end
+%}
+
+temp=Delta1/m;
+temp1=Delta2/m;
+W1grad= temp(:,2:end)+(lambda*W1)/m;
+b1grad=temp(:,1);
+b2grad= temp1(:,1);
+W2grad= temp1(:,2:end)+(lambda*W2)/m;
+
+
+%-------------------------------------------------------------------
+% After computing the cost and gradient, we will convert the gradients back
+% to a vector format (suitable for minFunc).  Specifically, we will unroll
+% your gradient matrices into a vector.
+
+grad = [W1grad(:) ; W2grad(:) ; b1grad(:) ; b2grad(:)];
+
+end
+
+%-------------------------------------------------------------------
+% Here's an implementation of the sigmoid function, which you may find useful
+% in your computation of the costs and the gradients.  This inputs a (row or
+% column) vector (say (z1, z2, z3)) and returns (f(z1), f(z2), f(z3)). 
+
+function sigm = sigmoid(x)
+  
+    sigm = 1 ./ (1 + exp(-x));
+end
+
